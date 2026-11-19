@@ -17,7 +17,7 @@
  * See README.md for the license.
  */
 
-const VERSION = '0.1';
+const VERSION = '0.2';
 
 const OK = 0;
 const WARNING = 1;
@@ -43,6 +43,13 @@ const OID_CONSOLE_TEXT = '.1.3.6.1.2.1.43.16.5.1.2';
 const OID_HR_DEVICE_DESCR = '.1.3.6.1.2.1.25.3.2.1.3';
 const OID_HR_DEVICE_STATUS = '.1.3.6.1.2.1.25.3.2.1.5';
 const OID_HR_DEVICE_ERRORS = '.1.3.6.1.2.1.25.3.2.1.6';
+// hrPrinterDetectedErrorState: OCTET STRING, bit 0 = most significant bit of the first byte
+const OID_HR_PRINTER_ERRORS = '.1.3.6.1.2.1.25.3.5.1.2';
+const PRINTER_ERROR_BITS = array(0 => 'low paper', 1 => 'no paper', 2 => 'low toner', 3 => 'no toner',
+	4 => 'door open', 5 => 'jammed', 6 => 'offline', 7 => 'service requested', 8 => 'input tray missing',
+	9 => 'output tray missing', 10 => 'marker supply missing', 11 => 'output near full', 12 => 'output full',
+	13 => 'input tray empty', 14 => 'overdue preventive maintenance');
+const PRINTER_ERROR_SERVICE_REQUESTED = 7;
 // Ricoh
 const OID_RICOH_COUNTER_NAME = '.1.3.6.1.4.1.367.3.2.1.2.19.5.1.5';
 const OID_RICOH_COUNTER_VALUE = '.1.3.6.1.4.1.367.3.2.1.2.19.5.1.9';
@@ -99,7 +106,11 @@ parts NUM
 
 hardware NUM
     A device of the Host Resources MIB, e.g. CPU or disk: OK when running,
-    WARNING when in warning or testing state, CRITICAL when down.
+    WARNING when in warning or testing state, CRITICAL when down. For the
+    printer itself, the text names the error bits it reports (low toner,
+    jammed, ...). A warning with no other error bit than "service requested"
+    and no alert that "alerts" would escalate is OK: Konica Minolta bizhub
+    report that while they sleep.
 
 alerts
     The alert table of the printer. Most alerts are WARNING; a jam, empty
@@ -405,8 +416,9 @@ function alert_rows() {
 /*
  * Codes are not always correct, but mostly; the severity is often strange.
  * So every alert is a warning, except the codes below.
+ * Returns array(state, critical codes, warning codes, texts).
  */
-function check_alerts() {
+function alert_summary() {
 	// jam, toner or ink empty, OPC life over, developer empty, toner cartridge missing
 	$critical_codes = array(8, 1101, 1102, 1112, 1114, 1115);
 	// e.g. cover closed, power saver, warming up, ready, paper low or empty, waste toner almost full
@@ -439,7 +451,11 @@ function check_alerts() {
 			$state = max($state, WARNING);
 		}
 	}
+	return array($state, $critical, $warning, $texts);
+}
 
+function check_alerts() {
+	list($state, $critical, $warning, $texts) = alert_summary();
 	$str = implode(', ', $texts);
 	// without alert texts (Kyocera), show the display of the printer
 	if ($str == '') {
@@ -496,6 +512,23 @@ function check_parts($num) {
 	nagios_return($state, "$name $text");
 }
 
+// the set bits of hrPrinterDetectedErrorState, NULL if the printer has no such value
+function printer_error_bits($value) {
+	if ($value === FALSE || $value === NULL)
+		return NULL;
+	// live (SNMP_VALUE_PLAIN): the raw bytes; fixture files: "Hex-STRING: 01 00" -> "01 00"
+	if (getenv('CHECK_PRINTER_FIXTURE') !== FALSE && preg_match('/^\s*(?:[0-9A-Fa-f]{2}(?:\s+|$))+$/', $value))
+		$bytes = array_map('hexdec', preg_split('/\s+/', trim($value)));
+	else
+		$bytes = array_map('ord', str_split($value));
+	$bits = array();
+	foreach ($bytes as $i => $byte)
+		for ($j = 0; $j < 8; $j++)
+			if ($byte & (0x80 >> $j))
+				$bits[] = $i * 8 + $j;
+	return $bits;
+}
+
 function check_hardware($num) {
 	$name = clean_string(snmp_get_value(OID_HR_DEVICE_DESCR . ".$num"));
 	$status = snmp_get_value(OID_HR_DEVICE_STATUS . ".$num");
@@ -503,6 +536,22 @@ function check_hardware($num) {
 	if ($name === FALSE || $status === FALSE)
 		nagios_return(UNKNOWN, "Hardware $num does not exist");
 	list($state, $text) = device_status($status);
+	$bits = printer_error_bits(snmp_get_value(OID_HR_PRINTER_ERRORS . ".$num"));
+	if ($bits)
+		$text .= ': ' . implode(', ', array_map(fn($b) => PRINTER_ERROR_BITS[$b] ?? "error bit $b", $bits));
+	/*
+	 * Konica Minolta bizhub (C251i) report "warning" with only "service requested" while they sleep,
+	 * with nothing but "Sleep" in the alert table. A "warning" whose only error bit is "service
+	 * requested", without an alert that check_alerts() would escalate, is therefore OK.
+	 * A "warning" without any error bit stays a warning: HP P2055dn report low toner that way.
+	 */
+	if ((int) $status == 3 && $bits === array(PRINTER_ERROR_SERVICE_REQUESTED)) {
+		list($alert_state, , , $alert_texts) = alert_summary();
+		if ($alert_state == OK) {
+			$state = OK;
+			$text .= ' (no active alert' . ($alert_texts ? ': ' . implode(', ', $alert_texts) : '') . ')';
+		}
+	}
 	$perf = is_numeric($errors) ? array('errors' => array('value' => (int) $errors, 'uom' => 'c')) : array();
 	nagios_return($state, "$name $text", $perf);
 }

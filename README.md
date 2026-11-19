@@ -58,7 +58,7 @@ index the printer uses for a supply, tray or other part; `list` shows them.
 |---|---|---|---|---|
 | toner, paper | above `WARN` (default 0.2), or "some left" | at or below `WARN`; Ricoh "almost empty" | at or below `CRIT` (default 0.0), empty | level or maximum unknown, level above the maximum |
 | parts | closed | open | | other status |
-| hardware | running | warning, testing | down | unknown |
+| hardware | running; warning with only "service requested" and no alert that `alerts` escalates (sleep mode of Konica Minolta bizhub) | warning, testing | down | unknown |
 | alerts | no alert, or only alerts like sleep mode, warming up, low paper | other alerts | jam, toner or ink empty, OPC life over, developer empty, toner cartridge missing | |
 | accounting | below the limit minus `WARN` | less than `WARN` of the limit left | at the limit | |
 
@@ -72,6 +72,17 @@ version. A missing supply, tray, part or counter is UNKNOWN.
 
 Levels go into the performance data with the thresholds as lower limits
 (`2000:`), counters with the unit `c`.
+
+## Changes in 0.2
+
+- `hardware` names the error bits of the printer (`hrPrinterDetectedErrorState`),
+  e.g. `warning: low toner, service requested`.
+- `hardware` is OK for a warning whose only error bit is "service requested"
+  while the alert table has no alert that `alerts` would escalate. Konica Minolta
+  bizhub (seen on a C251i) report this about 30 minutes after the last job, when
+  they go to sleep, with only `Sleep (code 504)` in the alert table; before, the
+  check was WARNING whenever the printer slept. A warning without any error bit
+  stays a warning: HP LaserJet P2055dn report low toner that way.
 
 ## Changes from the collection version
 

@@ -138,6 +138,25 @@ check "part missing" 3 "^PRINTER UNKNOWN - Part 4 does not exist$" "${P[@]}" par
 check "hardware running" 0 "^PRINTER OK - Example Color Laser 4200 running\|errors=3c$" "${P[@]}" hardware 1
 check "hardware down" 2 "^PRINTER CRITICAL - Hard disk down\|errors=17c$" "${P[@]}" hardware 2
 check "hardware missing" 3 "^PRINTER UNKNOWN - Hardware 3 does not exist$" "${P[@]}" hardware 3
+# hrPrinterDetectedErrorState: byte 1 0x01 = service requested, 0x20 = low toner, 0x04 = jammed;
+# byte 2 0x02 = overdue preventive maintenance
+F=$(fixture sleep.walk <<< $'.1.3.6.1.2.1.25.3.2.1.5.1 = INTEGER: 3\n.1.3.6.1.2.1.25.3.5.1.2.1 = Hex-STRING: 01 00 ')
+check "hardware sleeping" 0 "^PRINTER OK - Example Color Laser 4200 warning: service requested \(no active alert: Sleep \(code 504\)\)\|errors=3c$" --fixture "$F" "${P[@]}" hardware 1
+grep -v '^\.1\.3\.6\.1\.2\.1\.43\.18\.' "$F" > "$TMP/sleep_noalerts.walk"
+F=$TMP/sleep_noalerts.walk
+check "hardware service requested without alerts" 0 "^PRINTER OK - Example Color Laser 4200 warning: service requested \(no active alert\)\|" --fixture "$F" "${P[@]}" hardware 1
+F=$(fixture lowtoner.walk <<< $'.1.3.6.1.2.1.25.3.2.1.5.1 = INTEGER: 3\n.1.3.6.1.2.1.25.3.5.1.2.1 = Hex-STRING: 21 00 ')
+check "hardware low toner" 1 "^PRINTER WARNING - Example Color Laser 4200 warning: low toner, service requested\|" --fixture "$F" "${P[@]}" hardware 1
+F=$(fixture maintenance.walk <<< $'.1.3.6.1.2.1.25.3.2.1.5.1 = INTEGER: 3\n.1.3.6.1.2.1.25.3.5.1.2.1 = Hex-STRING: 01 02 ')
+check "hardware overdue maintenance" 1 "^PRINTER WARNING - Example Color Laser 4200 warning: service requested, overdue preventive maintenance\|" --fixture "$F" "${P[@]}" hardware 1
+F=$(fixture nobits.walk <<< $'.1.3.6.1.2.1.25.3.2.1.5.1 = INTEGER: 3\n.1.3.6.1.2.1.25.3.5.1.2.1 = Hex-STRING: 00 00 ')
+check "hardware warning without error bits" 1 "^PRINTER WARNING - Example Color Laser 4200 warning\|" --fixture "$F" "${P[@]}" hardware 1
+F=$(fixture noerrorvalue.walk <<< '.1.3.6.1.2.1.25.3.2.1.5.1 = INTEGER: 3')
+check "hardware warning without error value" 1 "^PRINTER WARNING - Example Color Laser 4200 warning\|" --fixture "$F" "${P[@]}" hardware 1
+F=$(fixture jamalert.walk <<< $'.1.3.6.1.2.1.25.3.2.1.5.1 = INTEGER: 3\n.1.3.6.1.2.1.25.3.5.1.2.1 = Hex-STRING: 01 00 \n.1.3.6.1.2.1.43.18.1.1.7.1.746 = INTEGER: 8\n.1.3.6.1.2.1.43.18.1.1.8.1.746 = STRING: "Paper jam"')
+check "hardware service requested with a jam alert" 1 "^PRINTER WARNING - Example Color Laser 4200 warning: service requested\|" --fixture "$F" "${P[@]}" hardware 1
+F=$(fixture jammed.walk <<< $'.1.3.6.1.2.1.25.3.2.1.5.1 = INTEGER: 5\n.1.3.6.1.2.1.25.3.5.1.2.1 = Hex-STRING: 04 00 ')
+check "hardware down and jammed" 2 "^PRINTER CRITICAL - Example Color Laser 4200 down: jammed\|" --fixture "$F" "${P[@]}" hardware 1
 
 echo "--- alerts"
 check "sleep alert of a bizhub is OK" 0 "^PRINTER OK - Sleep \(code 504\)$" "${P[@]}" alerts
